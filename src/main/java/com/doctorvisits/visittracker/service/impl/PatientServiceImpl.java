@@ -19,8 +19,12 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.Arrays;
+import java.util.Collections;
+import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
+import java.util.Optional;
 
 @Service
 @RequiredArgsConstructor
@@ -34,24 +38,56 @@ public class PatientServiceImpl implements PatientService {
     @Transactional(readOnly = true)
     public PatientListResponseDto getPatients(int page, int size, String search, String doctorIds) {
         List<Long> doctorIdList = parseDoctorIds(doctorIds);
-
         PageRequest pageRequest = PageRequest.of(page - 1, size);
+
         Page<Patient> patientsPage = patientRepository.findPatientsWithFilters(
                 search != null && !search.isBlank() ? search : null,
                 doctorIdList,
                 pageRequest
         );
 
-        List<PatientDataDto> patientData = patientsPage.getContent().stream()
+        List<Patient> patients = patientsPage.getContent();
+        if (patients.isEmpty()) {
+            return PatientListResponseDto.builder()
+                    .data(Collections.emptyList())
+                    .count(0L)
+                    .build();
+        }
+
+        List<Visit> allVisits = visitRepository.findVisitsByPatients(patients);
+        Map<Patient, List<Visit>> visitsByPatient = allVisits.stream()
+                .collect(Collectors.groupingBy(Visit::getPatient));
+
+        List<Long> allDoctorIds = allVisits.stream()
+                .map(visit -> visit.getDoctor().getId())
+                .distinct()
+                .collect(Collectors.toList());
+
+        List<Object[]> doctorPatientCounts = visitRepository.countDistinctPatientsByDoctors(allDoctorIds);
+        Map<Long, Long> doctorPatientCountMap = doctorPatientCounts.stream()
+                .collect(Collectors.toMap(row -> (Long) row[0], row -> (Long) row[1]));
+
+        List<PatientDataDto> patientData = patients.stream()
                 .map(patient -> {
-                    List<Visit> lastVisits = visitRepository.findLastVisitsByPatient(patient, doctorIdList);
+                    List<Visit> patientVisits = visitsByPatient.getOrDefault(patient, Collections.emptyList());
+                    List<Visit> lastVisits = patientVisits.stream()
+                            .filter(visit -> doctorIdList == null || doctorIdList.contains(visit.getDoctor().getId()))
+                            .collect(Collectors.groupingBy(
+                                    visit -> visit.getDoctor().getId(),
+                                    Collectors.maxBy(Comparator.comparing(Visit::getId))
+                            ))
+                            .values().stream()
+                            .filter(Optional::isPresent)
+                            .map(Optional::get)
+                            .collect(Collectors.toList());
+
                     List<VisitDataDto> visitDtos = lastVisits.stream()
                             .map(visit -> {
                                 Doctor doctor = visit.getDoctor();
                                 DoctorDataDto doctorDto = DoctorDataDto.builder()
                                         .firstName(doctor.getFirstName())
                                         .lastName(doctor.getLastName())
-                                        .totalPatients(visitRepository.countDistinctPatientsByDoctor(doctor))
+                                        .totalPatients(doctorPatientCountMap.getOrDefault(doctor.getId(), 0L))
                                         .build();
                                 return VisitDataDto.builder()
                                         .start(visit.getStartDateTime().toString())
@@ -60,6 +96,7 @@ public class PatientServiceImpl implements PatientService {
                                         .build();
                             })
                             .collect(Collectors.toList());
+
                     return PatientDataDto.builder()
                             .firstName(patient.getFirstName())
                             .lastName(patient.getLastName())

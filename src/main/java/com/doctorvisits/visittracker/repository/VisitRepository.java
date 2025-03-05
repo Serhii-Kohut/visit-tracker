@@ -5,19 +5,18 @@ import com.doctorvisits.visittracker.entity.Patient;
 import com.doctorvisits.visittracker.entity.Visit;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
 import java.time.ZonedDateTime;
 import java.util.List;
 
 public interface VisitRepository extends JpaRepository<Visit, Long> {
 
-    @Query("SELECT v FROM Visit v WHERE v.patient = :patient " +
-            "AND (:doctorIds IS NULL OR v.doctor.id IN :doctorIds) " +
-            "AND v.id IN (SELECT MAX(v2.id) FROM Visit v2 WHERE v2.patient = :patient GROUP BY v2.doctor)")
-    List<Visit> findLastVisitsByPatient(Patient patient, List<Long> doctorIds);
+    @Query("SELECT v FROM Visit v WHERE v.patient IN :patients")
+    List<Visit> findVisitsByPatients(@Param("patients") List<Patient> patients);
 
-    @Query("SELECT COUNT(DISTINCT v.patient) FROM Visit v WHERE v.doctor = :doctor")
-    int countDistinctPatientsByDoctor(Doctor doctor);
+    @Query("SELECT v.doctor.id, COUNT(DISTINCT v.patient) FROM Visit v WHERE v.doctor.id IN :doctorIds GROUP BY v.doctor.id")
+    List<Object[]> countDistinctPatientsByDoctors(@Param("doctorIds") List<Long> doctorIds);
 
     @Query("SELECT CASE WHEN COUNT(v) > 0 THEN true ELSE false END " +
             "FROM Visit v WHERE v.doctor = :doctor " +

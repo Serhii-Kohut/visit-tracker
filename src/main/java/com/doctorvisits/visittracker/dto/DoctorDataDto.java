@@ -15,5 +15,5 @@ import lombok.experimental.FieldDefaults;
 public class DoctorDataDto {
     String firstName;
     String lastName;
-    int totalPatients;
+    Long totalPatients;
 }
